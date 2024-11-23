@@ -7,9 +7,10 @@ const dataRoutes = require("./routes/dataRoutes");
 const alertRoutes = require("./routes/alertRoutes");
 const userRoutes = require("./routes/userRoutes");
 const cron = require("node-cron");
+const axios = require("axios");
 const socketIo = require("socket.io"); // Import Socket.io
-const { generateData, getData } = require("./controllers/dataController");
-const { controlDevice } = require("./controllers/deviceController");
+const ProductDefinition = require("./models/productDefinitionSchema");
+const Product = require("./models/productSchema");
 
 dotenv.config(); // Load environment variables
 
@@ -32,58 +33,70 @@ app.use("/api/devices", deviceRoutes);
 app.use("/api/data", dataRoutes);
 app.use("/api/alerts", alertRoutes);
 
-// Cron Job - Periodic task every minute
-// cron.schedule("* * * * * *", async () => {
-//   try {
-//     const productID = "your-product-id"; // You may need to dynamically pass this or fetch from DB
+// Function to generate and fetch data for all products
+const generateAndFetchData = async () => {
+  try {
+    console.log("Generating and fetching data...");
+    // Get all products
+    const products = await Product.find();
 
-//     // Step 1: Generate new sensor data for the product
-//     console.log("Generating new sensor data...");
-//     await generateData({ body: { deviceIds: [productID] } });
+    for (const product of products) {
+      const { _id, productID } = product;
 
-//     // Step 2: Fetch the updated sensor data for the product
-//     console.log("Fetching updated sensor data...");
-//     const data = await getData({ params: { prodID: productID } });
-//     const { temperature, humidity, gasLevel } = data;
+      // Fetch product definition for this product
+      const productDefinition = await ProductDefinition.findOne({
+        product: productID,
+      });
+      if (!productDefinition) {
+        console.error(`No product definition found for product: ${productID}`);
+        continue;
+      }
 
-//     // Step 3: Apply threshold logic
+      const { components } = productDefinition;
 
-//     // Temperature threshold check
-//     if (temperature > process.env.TEMPERATURE_THRESHOLD) {
-//       console.log("Temperature exceeds threshold! Activating cooling...");
-//       //   await controlDevice(productID, [
-//       //     { deviceID: "cooling-device-id", action: "start" },
-//       //   ]);
+      // Generate data using external API
+      await axios.post(`https://eureka.innotrat.in/generate_data`, {
+        productID,
+      });
 
-//       // Emit to frontend using Socket.io
-//       io.emit("temperature-alert", {
-//         message: `Temperature exceeds threshold! Current temperature: ${temperature}°C`,
-//       });
-//     }
+      // Fetch generated data
+      const response = await axios.post(`https://eureka.innotrat.in/get_data`, {
+        productID,
+      });
+      const dataEntries = response.data.data;
 
-//     // Humidity threshold check
-//     if (humidity > process.env.HUMIDITY_THRESHOLD) {
-//       console.log("Humidity exceeds threshold! Sending alert...");
+      // Check thresholds dynamically for each component
+      for (const entry of dataEntries) {
+        console.log(entry);
+        Object.keys(components).forEach((component) => {
+          const { range } = components[component];
+          if (range) {
+            const value = parseFloat(entry[component]);
+            if (value < range.min || value > range.max) {
+              console.log(
+                `Threshold alert: ${component} value (${value}) is out of range (${range.min}-${range.max}) for product ${productID}`
+              );
 
-//       // Emit to frontend using Socket.io
-//       io.emit("humidity-alert", {
-//         message: `Humidity exceeds threshold! Current humidity: ${humidity}%`,
-//       });
-//     }
-
-//     // Gas level threshold check
-//     if (gasLevel > process.env.GAS_THRESHOLD) {
-//       console.log("Gas level exceeds threshold! Sending alert...");
-
-//       // Emit to frontend using Socket.io
-//       io.emit("gas-level-alert", {
-//         message: `Gas level exceeds threshold! Current gas level: ${gasLevel} ppm`,
-//       });
-//     }
-//   } catch (error) {
-//     console.error("Error in periodic task:", error.message);
-//   }
-// });
+              // Send real-time alerts via Socket.IO
+              io.emit("thresholdAlert", {
+                productID,
+                component,
+                value,
+                range,
+                timestamp: entry.Timestamp,
+              });
+            }
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Error generating or fetching data:", error.message);
+  }
+};
+generateAndFetchData();
+// Schedule the cron job to run every second
+cron.schedule("* * * * *", generateAndFetchData);
 
 // Start the server
 const PORT = process.env.PORT || 5000;

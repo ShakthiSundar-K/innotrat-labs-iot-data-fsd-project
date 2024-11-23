@@ -1,5 +1,7 @@
 const express = require("express");
 const router = express.Router();
+const protect = require("../middlewares/protect");
+
 const {
   controlDevice,
   createDevice,
@@ -7,15 +9,16 @@ const {
 } = require("../controllers/deviceController");
 
 //Route to create a device
-router.post("/:prodID/devices", createDevice);
+router.post("/:prodID/devices", protect, createDevice);
 
 //Control action of device
 router.post(
   "/product/:prodID/devices/control/:deviceID/:action",
+  protect,
   controlDevice
 );
 
 // Route to control device actions (start/stop)
-router.post("/control", getDevicesByProduct);
+router.post("/control", protect, getDevicesByProduct);
 
 module.exports = router;

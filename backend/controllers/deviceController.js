@@ -1,51 +1,54 @@
 const axios = require("axios");
-const User = require("../models/userModel");
+const Product = require("../models/productSchema");
 
 // Create devices for a product
 exports.createDevice = async (req, res) => {
-  const { userID, prodID } = req.params;
-  const { deviceCount } = req.body;
+  const { prodID } = req.params; // Product ID from URL
+  const { id } = req.user; // User ID from authentication
+  const { deviceCount } = req.body; // Device count from request body
 
   if (!deviceCount || deviceCount <= 0) {
     return res.status(400).json({ message: "Invalid device count." });
   }
 
   try {
-    const user = await User.findById(userID);
+    // Make the API call to create devices
+    const response = await axios.post(
+      `https://eureka.innotrat.in/product/${prodID}/devices`,
+      {
+        deviceCount: deviceCount,
+      }
+    );
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found." });
+    const addedDevices = response.data.addedDevices;
+
+    if (!addedDevices || addedDevices.length === 0) {
+      return res.status(500).json({ message: "Failed to create devices." });
     }
 
-    const product = user.products.find((p) => p.productId === prodID);
+    // Find the product by productID
+    const product = await Product.findOne({ productID: prodID, user: id });
 
     if (!product) {
       return res.status(404).json({ message: "Product not found." });
     }
 
-    // Create device IDs
-    const newDevices = [];
-    for (let i = 0; i < deviceCount; i++) {
-      const deviceId = `device-${Math.random().toString(36).substr(2, 9)}`;
-      newDevices.push(deviceId);
-    }
+    // Add the new device IDs to the product's deviceIDs array
+    product.deviceIDs.push(...addedDevices);
 
-    // Add new device IDs to the product's devices array
-    product.devices.push(...newDevices);
+    // Save the updated product
+    await product.save();
 
-    // Save the user document
-    await user.save();
-
+    // Respond with the added devices
     res.status(201).json({
       message: `${deviceCount} device(s) created successfully.`,
-      devices: newDevices,
+      addedDevices: addedDevices,
     });
   } catch (error) {
     console.error("Error creating devices:", error.message);
     res.status(500).json({ message: "Failed to create devices." });
   }
 };
-
 // Get all devices for a product
 exports.getDevicesByProduct = async (req, res) => {
   const { prodID } = req.params;
